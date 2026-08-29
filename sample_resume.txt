@@ -1,0 +1,20 @@
+Alex Chen
+Senior Distributed Systems Engineer
+Email: alex.chen@example.com
+
+Summary:
+Full-stack and backend engineer with 6+ years of experience designing real-time distributed microservices, event streaming platforms with Apache Kafka, and RESTful APIs in FastAPI.
+
+Technical Skills:
+- Languages & Frameworks: Python, FastAPI, TypeScript, Node.js, Go
+- Databases & Messaging: PostgreSQL, Redis, Apache Kafka, DynamoDB
+- Infrastructure: Docker, Kubernetes, AWS (ECS, Lambda, S3), Terraform
+
+Key Projects:
+1. Real-Time Telemetry Pipeline:
+   - Architected an event streaming platform processing 50,000 events/second using Kafka and FastAPI microservices.
+   - Reduced p99 query latency from 320ms to 45ms through distributed Redis caching and database indexing.
+   - Built automated failover mechanisms and circuit breakers for 99.99% system availability.
+
+2. Cloud-Native Authentication Gateway:
+   - Designed OAuth2 / JWT auth service handling 100k daily active users.
