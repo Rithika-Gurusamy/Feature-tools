@@ -28,8 +28,9 @@ async def start_interview(payload: dict):
 @router.post("/message", response_model=InterviewMessageResponse)
 async def send_interview_message(req: InterviewMessageRequest):
     """
-    Canonical endpoint for candidate messages (both typed text and STT audio transcripts).
-    Appends candidate message, queries AI conversation engine, updates history, and returns response.
+    Canonical endpoint for candidate messages.
+    Orchestrates intent classification, routes to specialized agent with Candidate JSON Memory,
+    updates history, and returns response with intent metadata.
     """
     if not req.session_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="session_id is required")
@@ -42,14 +43,12 @@ async def send_interview_message(req: InterviewMessageRequest):
     if not clean_message:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Candidate message cannot be empty")
 
-    # If session is paused, resume it on candidate activity
     if session.is_paused:
         session.resume()
 
     # Record candidate's message
     session.add_message(role="candidate", content=clean_message)
 
-    # Check if time has expired
     remaining = session.get_remaining_seconds()
     if remaining <= 0 or session.is_finished:
         session.finish()
@@ -58,27 +57,41 @@ async def send_interview_message(req: InterviewMessageRequest):
             "Thank you for sharing your project experiences and architectural tradeoffs. "
             "You can now review our full transcript summary."
         )
-        session.add_message(role="interviewer", content=wrap_up_msg)
+        session.add_message(
+            role="interviewer",
+            content=wrap_up_msg,
+            intent="INTERVIEW_WRAPUP",
+            agent_used="TechnicalInterviewerAgent"
+        )
         return InterviewMessageResponse(
             session_id=session.session_id,
             response_text=wrap_up_msg,
             message_type="interviewer",
             should_speak=True,
             time_remaining_seconds=0,
-            is_finished=True
+            is_finished=True,
+            intent_classified="INTERVIEW_WRAPUP",
+            agent_used="TechnicalInterviewerAgent",
+            candidate_memory=session.candidate_profile
         )
 
-    # Generate next interviewer question
-    response_text = interview_service.generate_response(
+    # Multi-Agent Intent Orchestration with Candidate JSON Memory
+    response_text, intent_classified, agent_used = interview_service.generate_response(
         session_id=session.session_id,
-        candidate_name=session.candidate_name,
+        candidate_memory=session.candidate_profile,
         resume_text=session.resume_text,
         conversation_history=session.conversation_history,
-        candidate_message=clean_message
+        candidate_message=clean_message,
+        remaining_seconds=remaining
     )
 
-    # Record interviewer's response
-    session.add_message(role="interviewer", content=response_text)
+    # Record interviewer's response with agent metadata
+    session.add_message(
+        role="interviewer",
+        content=response_text,
+        intent=intent_classified,
+        agent_used=agent_used
+    )
 
     return InterviewMessageResponse(
         session_id=session.session_id,
@@ -86,15 +99,15 @@ async def send_interview_message(req: InterviewMessageRequest):
         message_type="interviewer",
         should_speak=True,
         time_remaining_seconds=session.get_remaining_seconds(),
-        is_finished=session.is_finished
+        is_finished=session.is_finished,
+        intent_classified=intent_classified,
+        agent_used=agent_used,
+        candidate_memory=session.candidate_profile
     )
 
 @router.post("/audio", response_model=AudioTranscribeResponse)
 async def process_audio_stt(file: UploadFile = File(...)):
-    """
-    Fallback backend audio transcription endpoint.
-    Transcribes uploaded audio blob into text.
-    """
+    """Fallback backend audio transcription endpoint."""
     try:
         contents = await file.read()
         text, confidence = speech_service.transcribe(contents, file.content_type or "audio/wav")
@@ -104,7 +117,7 @@ async def process_audio_stt(file: UploadFile = File(...)):
 
 @router.get("/{session_id}", response_model=InterviewSessionState)
 async def get_session_state(session_id: str):
-    """Retrieves the full real-time session state and conversation history."""
+    """Retrieves full real-time session state, candidate JSON memory, and conversation history."""
     session = session_store.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")

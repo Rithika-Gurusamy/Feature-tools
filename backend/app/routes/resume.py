@@ -11,7 +11,7 @@ router = APIRouter(prefix="/resume", tags=["Resume"])
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(file: UploadFile = File(...)):
     """
-    Receives candidate resume (PDF, DOCX, TXT), parses text,
+    Receives candidate resume, extracts structured CandidateProfile JSON memory,
     creates in-memory session, initializes conversation, and returns the opening question.
     """
     if not file.filename:
@@ -43,32 +43,40 @@ async def upload_resume(file: UploadFile = File(...)):
                 detail="Could not extract readable text from the uploaded resume. Please verify the file content."
             )
 
-        candidate_name = resume_service.detect_candidate_name(resume_text, filename)
+        # Extract structured CandidateProfile JSON Memory
+        candidate_profile = resume_service.extract_candidate_profile(resume_text, filename)
         session_id = str(uuid.uuid4())
 
-        # Create session
+        # Create session with candidate memory
         session = session_store.create_session(
             session_id=session_id,
-            candidate_name=candidate_name,
+            candidate_name=candidate_profile.candidate_name,
             resume_text=resume_text,
+            candidate_profile=candidate_profile,
             target_duration=settings.DEFAULT_INTERVIEW_DURATION_SECONDS
         )
 
-        # Generate opening question and add to conversation history
+        # Generate tailored opening question based on candidate JSON memory
         initial_question = interview_service.get_initial_question(
             session_id=session_id,
-            candidate_name=candidate_name,
+            candidate_memory=candidate_profile,
             resume_text=resume_text
         )
-        session.add_message(role="interviewer", content=initial_question)
+        session.add_message(
+            role="interviewer",
+            content=initial_question,
+            intent="INITIAL_QUESTION",
+            agent_used="TechnicalInterviewerAgent"
+        )
         session.start()
 
         return ResumeUploadResponse(
             session_id=session_id,
-            candidate_name=candidate_name,
+            candidate_name=candidate_profile.candidate_name,
             resume_uploaded=True,
             initial_message=initial_question,
-            target_duration_seconds=session.target_duration_seconds
+            target_duration_seconds=session.target_duration_seconds,
+            candidate_profile=candidate_profile
         )
 
     except HTTPException:

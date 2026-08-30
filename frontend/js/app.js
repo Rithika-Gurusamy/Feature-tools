@@ -7,6 +7,7 @@
 const state = {
   sessionId: null,
   candidateName: "Candidate",
+  candidateProfile: null,
   remainingSeconds: 300,
   isPaused: false,
   isFinished: false,
@@ -27,11 +28,24 @@ const DOM = {
   // Header Elements
   headerControls: document.getElementById("interview-header-controls"),
   headerCandidateName: document.getElementById("header-candidate-name"),
+  btnToggleMemory: document.getElementById("btn-toggle-memory"),
   aiStatusIndicator: document.getElementById("ai-status-indicator"),
   aiStatusText: document.getElementById("ai-status-text"),
   timerDisplay: document.getElementById("timer-display"),
   timerCard: document.getElementById("timer-display-card"),
   btnFinish: document.getElementById("btn-finish-interview"),
+
+  // Memory Drawer
+  memoryDrawer: document.getElementById("memory-drawer"),
+  btnCloseMemory: document.getElementById("btn-close-memory"),
+  memName: document.getElementById("mem-name"),
+  memTitle: document.getElementById("mem-title"),
+  memEmail: document.getElementById("mem-email"),
+  memSkillsTags: document.getElementById("mem-skills-tags"),
+  memProjectsList: document.getElementById("mem-projects-list"),
+  memTopics: document.getElementById("mem-topics"),
+  memStrengths: document.getElementById("mem-strengths"),
+  memRawJson: document.getElementById("mem-raw-json"),
 
   // Upload Screen
   dropZone: document.getElementById("drop-zone"),
@@ -120,6 +134,14 @@ function setupEventListeners() {
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFileUpload(e.dataTransfer.files[0]);
     }
+  });
+
+  // Memory Drawer Toggle
+  DOM.btnToggleMemory.addEventListener("click", () => {
+    DOM.memoryDrawer.classList.toggle("hidden");
+  });
+  DOM.btnCloseMemory.addEventListener("click", () => {
+    DOM.memoryDrawer.classList.add("hidden");
   });
 
   // Screen 2: TTS UI Controls
@@ -302,20 +324,23 @@ async function handleFileUpload(file) {
     const data = await response.json();
     state.sessionId = data.session_id;
     state.candidateName = data.candidate_name || "Candidate";
+    state.candidateProfile = data.candidate_profile || null;
     state.remainingSeconds = data.target_duration_seconds || 300;
     state.conversationHistory = [];
 
     DOM.headerCandidateName.textContent = state.candidateName;
+    renderCandidateMemory(state.candidateProfile);
 
     // Transition to Interview Screen
     switchScreen("interview");
 
     // Add initial question to chat
-    appendMessage("interviewer", data.initial_message);
+    appendMessage("interviewer", data.initial_message, "INITIAL_QUESTION");
     state.conversationHistory.push({
       role: "interviewer",
       content: data.initial_message,
-      timestamp: Date.now() / 1000
+      timestamp: Date.now() / 1000,
+      intent: "INITIAL_QUESTION"
     });
 
     // Speak initial question aloud
@@ -329,6 +354,60 @@ async function handleFileUpload(file) {
     showUploadError(error.message || "An error occurred while uploading your resume.");
     DOM.uploadStatusCard.classList.add("hidden");
   }
+}
+
+function renderCandidateMemory(profile) {
+  if (!profile) return;
+  state.candidateProfile = profile;
+
+  DOM.memName.textContent = profile.candidate_name || "-";
+  DOM.memTitle.textContent = profile.title || "-";
+  DOM.memEmail.textContent = profile.email || "Not specified";
+
+  // Skills
+  DOM.memSkillsTags.innerHTML = "";
+  if (profile.skills && profile.skills.length > 0) {
+    profile.skills.forEach((s) => {
+      const tag = document.createElement("span");
+      tag.className = "skill-tag";
+      tag.textContent = s;
+      DOM.memSkillsTags.appendChild(tag);
+    });
+  } else {
+    DOM.memSkillsTags.textContent = "None extracted";
+  }
+
+  // Projects
+  DOM.memProjectsList.innerHTML = "";
+  if (profile.projects && profile.projects.length > 0) {
+    profile.projects.forEach((p) => {
+      const pItem = document.createElement("div");
+      pItem.className = "mem-project-item";
+      const techBadges = p.technologies.map((t) => `<span class="mem-tech-pill">${escapeHTML(t)}</span>`).join("");
+      const metricText = p.metrics ? `<div style="color: #6ee7b7; font-size: 0.75rem; margin-top: 2px;">⚡ ${escapeHTML(p.metrics)}</div>` : "";
+      pItem.innerHTML = `
+        <strong>${escapeHTML(p.name)}</strong>
+        <p style="color: var(--text-muted); font-size: 0.75rem;">${escapeHTML(p.description || '')}</p>
+        ${metricText}
+        <div>${techBadges}</div>
+      `;
+      DOM.memProjectsList.appendChild(pItem);
+    });
+  } else {
+    DOM.memProjectsList.textContent = "None extracted";
+  }
+
+  // Dynamic State
+  DOM.memTopics.textContent = profile.topics_covered && profile.topics_covered.length > 0
+    ? profile.topics_covered.join(", ")
+    : "None yet";
+
+  DOM.memStrengths.textContent = profile.evaluated_strengths && profile.evaluated_strengths.length > 0
+    ? profile.evaluated_strengths.join(", ")
+    : "Evaluating...";
+
+  // Raw JSON
+  DOM.memRawJson.textContent = JSON.stringify(profile, null, 2);
 }
 
 function showUploadError(message) {
@@ -372,7 +451,7 @@ function updateTimerUI() {
 async function handleTimeExpired() {
   window.ttsController.stopSpeech();
   const timeMsg = "Our 5-minute technical session time is complete. Let's wrap up!";
-  appendMessage("interviewer", timeMsg);
+  appendMessage("interviewer", timeMsg, "INTERVIEW_WRAPUP");
   window.ttsController.speak(timeMsg);
 
   setTimeout(() => {
@@ -396,7 +475,7 @@ async function handleSendMessage() {
   state.isSubmitting = true;
   DOM.btnSendMessage.disabled = true;
   DOM.candidateTextInput.value = "";
-  DOM.candidateTextInput.placeholder = "AI is preparing response...";
+  DOM.candidateTextInput.placeholder = "AI is evaluating response...";
 
   // 1. Append candidate message to UI immediately
   appendMessage("candidate", rawMessage);
@@ -427,18 +506,23 @@ async function handleSendMessage() {
 
     const data = await response.json();
 
-    // 4. Update timer & session state
+    // 4. Update timer & session memory
     if (typeof data.time_remaining_seconds === "number") {
       state.remainingSeconds = data.time_remaining_seconds;
       updateTimerUI();
     }
+    if (data.candidate_memory) {
+      renderCandidateMemory(data.candidate_memory);
+    }
 
-    // 5. Append interviewer response
-    appendMessage("interviewer", data.response_text);
+    // 5. Append interviewer response with intent badge
+    appendMessage("interviewer", data.response_text, data.intent_classified, data.agent_used);
     state.conversationHistory.push({
       role: "interviewer",
       content: data.response_text,
-      timestamp: Date.now() / 1000
+      timestamp: Date.now() / 1000,
+      intent: data.intent_classified,
+      agent_used: data.agent_used
     });
 
     // 6. Speak response if enabled
@@ -464,7 +548,7 @@ async function handleSendMessage() {
 }
 
 // --- UI MESSAGE RENDERING ---
-function appendMessage(role, text) {
+function appendMessage(role, text, intent = null, agent = null) {
   const isInterviewer = role === "interviewer";
   const item = document.createElement("div");
   item.className = `message-item ${isInterviewer ? "interviewer" : "candidate"}`;
@@ -472,13 +556,34 @@ function appendMessage(role, text) {
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+  let intentBadgeHtml = "";
+  if (intent) {
+    let badgeClass = "intent-badge";
+    let label = intent;
+    if (intent === "PROFILE_QUERY") {
+      badgeClass += " profile";
+      label = "Profile QA";
+    } else if (intent === "INTERVIEW_META_QUERY") {
+      badgeClass += " meta";
+      label = "Meta Query";
+    } else if (intent === "TECHNICAL_ANSWER") {
+      label = "Tech Deep-Dive";
+    } else if (intent === "INITIAL_QUESTION") {
+      label = "Opening";
+    }
+    intentBadgeHtml = `<span class="${badgeClass}">${label}</span>`;
+  }
+
   item.innerHTML = `
     <div class="avatar ${isInterviewer ? "interviewer-avatar" : "candidate-avatar"}">
       ${isInterviewer ? "AI" : "YOU"}
     </div>
     <div class="bubble">
       <div class="bubble-meta">
-        <span class="speaker-name">${isInterviewer ? "Technical Interviewer" : state.candidateName}</span>
+        <span class="speaker-name">
+          ${isInterviewer ? "Technical Interviewer" : state.candidateName}
+          ${intentBadgeHtml}
+        </span>
         <span class="timestamp">${timeStr}</span>
       </div>
       <div class="message-content">${escapeHTML(text)}</div>

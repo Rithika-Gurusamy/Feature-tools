@@ -1,14 +1,22 @@
 import time
 import threading
 from typing import Dict, Optional, List
-from app.models.schemas import MessageItem, InterviewSessionState
+from app.models.schemas import MessageItem, InterviewSessionState, CandidateProfile
 from app.core.config import settings
 
 class SessionData:
-    def __init__(self, session_id: str, candidate_name: str, resume_text: str, target_duration: int = 300):
+    def __init__(
+        self,
+        session_id: str,
+        candidate_name: str,
+        resume_text: str,
+        candidate_profile: Optional[CandidateProfile] = None,
+        target_duration: int = 300
+    ):
         self.session_id = session_id
         self.candidate_name = candidate_name
         self.resume_text = resume_text
+        self.candidate_profile: CandidateProfile = candidate_profile or CandidateProfile(candidate_name=candidate_name)
         self.target_duration_seconds = target_duration
         self.start_time: Optional[float] = None
         self.paused_at: Optional[float] = None
@@ -56,8 +64,14 @@ class SessionData:
     def finish(self):
         self.is_finished = True
 
-    def add_message(self, role: str, content: str) -> MessageItem:
-        msg = MessageItem(role=role, content=content, timestamp=time.time())
+    def add_message(self, role: str, content: str, intent: Optional[str] = None, agent_used: Optional[str] = None) -> MessageItem:
+        msg = MessageItem(
+            role=role,
+            content=content,
+            timestamp=time.time(),
+            intent=intent,
+            agent_used=agent_used
+        )
         self.conversation_history.append(msg)
         return msg
 
@@ -71,25 +85,33 @@ class SessionData:
             time_remaining_seconds=self.get_remaining_seconds(),
             is_paused=self.is_paused,
             is_finished=self.is_finished or (self.get_remaining_seconds() <= 0),
-            conversation_history=self.conversation_history
+            conversation_history=self.conversation_history,
+            candidate_profile=self.candidate_profile
         )
 
 
 class InMemorySessionStore:
     """
-    Thread-safe in-memory session store.
-    Easily replaceable with Redis / Postgres in future phases.
+    Thread-safe in-memory session store holding candidate JSON memory.
     """
     def __init__(self):
         self._sessions: Dict[str, SessionData] = {}
         self._lock = threading.Lock()
 
-    def create_session(self, session_id: str, candidate_name: str, resume_text: str, target_duration: int = 300) -> SessionData:
+    def create_session(
+        self,
+        session_id: str,
+        candidate_name: str,
+        resume_text: str,
+        candidate_profile: Optional[CandidateProfile] = None,
+        target_duration: int = 300
+    ) -> SessionData:
         with self._lock:
             session = SessionData(
                 session_id=session_id,
                 candidate_name=candidate_name,
                 resume_text=resume_text,
+                candidate_profile=candidate_profile,
                 target_duration=target_duration or settings.DEFAULT_INTERVIEW_DURATION_SECONDS
             )
             self._sessions[session_id] = session
