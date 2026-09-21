@@ -49,3 +49,51 @@ def verify_otp(data: VerifyRequest):
     
     del otp_store[data.email]
     return {"message": "OTP verified successfully"}
+
+
+#twilio
+import os
+import random
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from twilio.rest import Client
+
+app = FastAPI()
+
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "your_account_sid")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "your_auth_token")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "your_twilio_phone_number")
+
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+otp_store = {}
+
+class SMSRequest(BaseModel):
+    phone_number: str
+
+class VerifyRequest(BaseModel):
+    phone_number: str
+    otp: str
+
+@app.post("/send-otp")
+def send_otp(data: SMSRequest):
+    code = f"{random.randint(100000, 999999)}"
+    otp_store[data.phone_number] = code
+    
+    try:
+        twilio_client.messages.create(
+            body=f"Your OTP is: {code}",
+            from_=TWILIO_PHONE_NUMBER,
+            to=data.phone_number
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send SMS: {str(e)}")
+        
+    return {"message": "OTP sent successfully"}
+
+@app.post("/verify-otp")
+def verify_otp(data: VerifyRequest):
+    stored_code = otp_store.get(data.phone_number)
+    if not stored_code or stored_code != data.otp:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    del otp_store[data.phone_number]
+    return {"message": "OTP verified successfully"}
