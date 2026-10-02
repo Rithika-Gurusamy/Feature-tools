@@ -97,3 +97,6 @@ def verify_otp(data: VerifyRequest):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     del otp_store[data.phone_number]
     return {"message": "OTP verified successfully"}
+
+
+
